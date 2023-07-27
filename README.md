@@ -14,8 +14,8 @@ Twin-Process 是一个用 Go 语言编写的程序，其主要功能是创建和
 
 程序使用两个文件来管理进程和通信：
 
-- `/tmp/stop_signal`：这个文件用于传递停止信号。如果这个文件存在，所有的进程都将停止运行。
-- `/tmp/myapp_pids`：这个文件包含了所有正在运行的进程的 PID。每个进程在启动时都会把自己的 PID 写入这个文件。`stop`命令将读取这个文件，并向每个 PID 发送一个停止信号。
+- `/tmp/stop_signal` 或 `C:\\Temp\\stop_signal.txt`：这个文件用于传递停止信号。如果这个文件存在，所有的进程都将停止运行。
+- `/tmp/myapp_pids` 或 `C:\\Temp\\pids.txt`：这个文件包含了所有正在运行的进程的 PID。每个进程在启动时都会把自己的 PID 写入这个文件。`stop`命令将读取这个文件，并向每个 PID 发送一个停止信号。
 
 ## 代码示例
 
@@ -24,66 +24,61 @@ Twin-Process 是一个用 Go 语言编写的程序，其主要功能是创建和
 ```go
 // ...
 
-func monitor(partnerPID int) {
-    go writePIDPeriodically()
+type Process struct {
+	Pid        int
+	IsMonitor  bool
+	PartnerPID int
+}
 
-    if partnerPID == 0 {
-        cmd := startWorker()
-        partnerPID = cmd.Process.Pid
-    }
+func (p *Process) Start() {
+	go writePIDPeriodically()
 
-    for {
-        if isSignalFileExist() {
-            fmt.Println("Signal file exist, exiting...")
-            os.Exit(0)
-        }
+	if p.PartnerPID == 0 {
+		cmd := p.startPartner()
+		p.PartnerPID = cmd.Process.Pid
+	}
 
-        if !isProcessAlive(partnerPID) {
-            fmt.Println("Worker is not alive, restarting it...")
-            cmd := startWorker()
-            partnerPID = cmd.Process.Pid
-        }
+	for {
+		if isSignalFileExist() {
+			fmt.Println("Signal file exist, exiting...")
+			os.Exit(0)
+		}
 
-        time.Sleep(time.Second)
-    }
+		if !isProcessAlive(p.PartnerPID) {
+			fmt.Println("Partner is not alive, restarting it...")
+			cmd := p.startPartner()
+			p.PartnerPID = cmd.Process.Pid
+		}
+
+		if p.IsMonitor {
+			fmt.Println("Monitoring...", time.Now().Format(time.DateTime))
+		} else {
+			fmt.Println("Doing some work...", time.Now().Format(time.DateTime))
+		}
+
+		time.Sleep(time.Second)
+	}
+}
+
+func (p *Process) startPartner() *exec.Cmd {
+	var cmd *exec.Cmd
+	if p.IsMonitor {
+		cmd = exec.Command(os.Args[0], "start-worker", strconv.Itoa(os.Getpid()))
+	} else {
+		cmd = exec.Command(os.Args[0], "start-monitor", strconv.Itoa(os.Getpid()))
+	}
+	cmd.Start()
+	addPIDToFile(cmd.Process.Pid)
+	return cmd
 }
 
 // ...
 
-func worker(partnerPID int) {
-    go writePIDPeriodically()
-
-    if partnerPID == 0 {
-        cmd := startMonitor()
-        partnerPID = cmd.Process.Pid
-    }
-
-    for {
-        if isSignalFileExist() {
-            fmt.Println("Signal file exist, exiting...")
-            os.Exit(0)
-        }
-
-        if !isProcessAlive(partnerPID) {
-            fmt.Println("Monitor is not alive, restarting it...")
-            cmd := startMonitor()
-            partnerPID = cmd.Process.Pid
-        }
-
-        // Do some work here...
-        time.Sleep(time.Second)
-    }
-}
-
-// ...
-
-func writePIDPeriodically() {
-    ticker := time.NewTicker(30 * time.Second)
-    defer ticker.Stop()
-
-    for range ticker.C {
-        addPIDToFile(os.Getpid())
-    }
+func main() {
+	rootCmd.AddCommand(startMonitorCmd)
+	rootCmd.AddCommand(startWorkerCmd)
+	rootCmd.AddCommand(stopCmd)
+	rootCmd.Execute()
 }
 
 // ...
