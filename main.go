@@ -49,7 +49,8 @@ var startMonitorCmd = &cobra.Command{
 			}
 		}
 
-		monitor(partnerPID)
+		monitor := &Process{IsMonitor: true, PartnerPID: partnerPID}
+		monitor.Start()
 	},
 }
 
@@ -68,7 +69,8 @@ var startWorkerCmd = &cobra.Command{
 			}
 		}
 
-		worker(partnerPID)
+		worker := &Process{IsMonitor: false, PartnerPID: partnerPID}
+		worker.Start()
 	},
 }
 
@@ -88,11 +90,18 @@ func main() {
 	rootCmd.Execute()
 }
 
-func monitor(partnerPID int) {
+type Process struct {
+	Pid        int
+	IsMonitor  bool
+	PartnerPID int
+}
+
+func (p *Process) Start() {
 	go writePIDPeriodically()
-	if partnerPID == 0 {
-		cmd := startWorker()
-		partnerPID = cmd.Process.Pid
+
+	if p.PartnerPID == 0 {
+		cmd := p.startPartner()
+		p.PartnerPID = cmd.Process.Pid
 	}
 
 	for {
@@ -101,56 +110,35 @@ func monitor(partnerPID int) {
 			os.Exit(0)
 		}
 
-		if !isProcessAlive(partnerPID) {
-			fmt.Println("Worker is not alive, restarting it...")
-			cmd := startWorker()
-			partnerPID = cmd.Process.Pid
+		if !isProcessAlive(p.PartnerPID) {
+			fmt.Println("Partner is not alive, restarting it...")
+			cmd := p.startPartner()
+			p.PartnerPID = cmd.Process.Pid
 		}
 
-		fmt.Println("Monitoring...", time.Now().Format(time.DateTime))
+		if p.IsMonitor {
+			fmt.Println("Monitoring...", time.Now().Format(time.DateTime))
+		} else {
+			fmt.Println("Doing some work...", time.Now().Format(time.DateTime))
+		}
 
 		time.Sleep(time.Second)
 	}
 }
 
-func worker(partnerPID int) {
-	go writePIDPeriodically()
-	if partnerPID == 0 {
-		cmd := startMonitor()
-		partnerPID = cmd.Process.Pid
+func (p *Process) startPartner() *exec.Cmd {
+	var cmd *exec.Cmd
+	if p.IsMonitor {
+		cmd = exec.Command(os.Args[0], "start-worker", strconv.Itoa(os.Getpid()))
+	} else {
+		cmd = exec.Command(os.Args[0], "start-monitor", strconv.Itoa(os.Getpid()))
 	}
-
-	for {
-		if isSignalFileExist() {
-			fmt.Println("Signal file exist, exiting...")
-			os.Exit(0)
-		}
-
-		if !isProcessAlive(partnerPID) {
-			fmt.Println("Monitor is not alive, restarting it...")
-			cmd := startMonitor()
-			partnerPID = cmd.Process.Pid
-		}
-
-		fmt.Println("Doing some work...", time.Now().Format(time.DateTime))
-		// Do some work here...
-		time.Sleep(time.Second)
-	}
-}
-
-func startMonitor() *exec.Cmd {
-	cmd := exec.Command(os.Args[0], "start-monitor", strconv.Itoa(os.Getpid()))
 	cmd.Start()
 	addPIDToFile(cmd.Process.Pid)
 	return cmd
 }
 
-func startWorker() *exec.Cmd {
-	cmd := exec.Command(os.Args[0], "start-worker", strconv.Itoa(os.Getpid()))
-	cmd.Start()
-	addPIDToFile(cmd.Process.Pid)
-	return cmd
-}
+// ... other functions ...
 
 func isProcessAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
